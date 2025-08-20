@@ -20,21 +20,20 @@ export async function POST(request: Request) {
 		const blob = new Blob([arrayBuffer], { type: (audio as Blob).type || "audio/webm" });
 		const file = await toFile(blob, "audio.webm");
 
-		// Prefer the newer transcribe model; fallback to whisper if needed
 		let text: string | undefined;
 		try {
 			const transcription = await openai.audio.transcriptions.create({
 				model: "gpt-4o-mini-transcribe",
 				file,
 			});
-			// @ts-expect-error - SDK types may differ; .text exists on response
+		
 			text = transcription.text?.toString();
 		} catch (err) {
 			const transcription = await openai.audio.transcriptions.create({
 				model: "whisper-1",
 				file,
 			});
-			// @ts-expect-error - SDK types may differ; .text exists on response
+		
 			text = transcription.text?.toString();
 		}
 
