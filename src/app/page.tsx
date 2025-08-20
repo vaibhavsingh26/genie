@@ -4,6 +4,24 @@ import { useEffect, useRef, useState } from "react";
 type Scenario = "" | "At School" | "At Store" | "At Home";
 type Language = "English" | "Hindi" | "Marathi" | "Gujarati" | "Tamil" | "Spanish";
 
+// Extended types for browser APIs
+type ExtendedNavigator = Navigator & {
+  mediaDevices?: MediaDevices;
+};
+
+type ExtendedMediaDevices = MediaDevices & {
+  getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+  enumerateDevices?: () => Promise<MediaDeviceInfo[]>;
+};
+
+type ExtendedWindow = Window & {
+  MediaRecorder: typeof MediaRecorder;
+};
+
+type ExtendedMediaRecorder = MediaRecorder & {
+  mimeType?: string;
+};
+
 export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -25,7 +43,7 @@ export default function Home() {
       const hasWindow = typeof window !== "undefined";
       const hasNavigator = typeof navigator !== "undefined";
       const hasMediaRecorder = hasWindow && "MediaRecorder" in window;
-      const hasGetUserMedia = hasNavigator && !!(navigator as any).mediaDevices?.getUserMedia;
+      const hasGetUserMedia = hasNavigator && !!(navigator as ExtendedNavigator).mediaDevices?.getUserMedia;
       setSupportsRecording(Boolean(hasMediaRecorder && hasGetUserMedia));
     } catch {
       setSupportsRecording(false);
@@ -34,7 +52,7 @@ export default function Home() {
     // Try to list microphones (labels appear after permission is granted)
     (async () => {
       try {
-        const enumerate = (navigator as any).mediaDevices?.enumerateDevices?.bind((navigator as any).mediaDevices);
+        const enumerate = (navigator as ExtendedNavigator).mediaDevices?.enumerateDevices;
         if (enumerate) {
           const devices: MediaDeviceInfo[] = await enumerate();
           setInputDevices(devices.filter((d) => d.kind === "audioinput"));
@@ -53,16 +71,17 @@ export default function Home() {
       return;
     }
     try {
-      const gum = (navigator as any).mediaDevices?.getUserMedia?.bind((navigator as any).mediaDevices);
-      if (!gum) {
+      const mediaDevices = (navigator as ExtendedNavigator).mediaDevices as ExtendedMediaDevices;
+      const getUserMedia = mediaDevices?.getUserMedia;
+      if (!getUserMedia) {
         setError("Microphone access API not available.");
         return;
       }
       const audioConstraints: MediaTrackConstraints = selectedDeviceId
         ? { deviceId: { exact: selectedDeviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-      const stream = await gum({ audio: audioConstraints });
-      const MR: any = (window as any).MediaRecorder;
+      const stream = await getUserMedia({ audio: audioConstraints });
+      const MediaRecorderClass = (window as ExtendedWindow).MediaRecorder;
       const pickMimeType = (): string | undefined => {
         const candidates = [
           "audio/webm;codecs=opus",
@@ -70,21 +89,21 @@ export default function Home() {
           "audio/ogg;codecs=opus",
           "audio/mp4",
         ];
-        if (typeof MR?.isTypeSupported === "function") {
+        if (typeof MediaRecorderClass?.isTypeSupported === "function") {
           for (const c of candidates) {
-            try { if (MR.isTypeSupported(c)) return c; } catch { /* no-op */ }
+            try { if (MediaRecorderClass.isTypeSupported(c)) return c; } catch { /* no-op */ }
           }
         }
         return undefined;
       };
       const mimeType = pickMimeType();
-      const recorder: MediaRecorder = mimeType ? new MR(stream, { mimeType }) : new MR(stream);
+      const recorder: MediaRecorder = mimeType ? new MediaRecorderClass(stream, { mimeType }) : new MediaRecorderClass(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = async () => {
-        const type = (recorder as any)?.mimeType || "audio/webm";
+        const type = (recorder as ExtendedMediaRecorder)?.mimeType || "audio/webm";
         const blob = new Blob(chunksRef.current, { type });
 
         // If the recorded blob is too small, it's likely silence or no capture
@@ -100,12 +119,13 @@ export default function Home() {
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
-    } catch (err: any) {
-      const name = err?.name || "Error";
+    } catch (err: unknown) {
+      const error = err as Error;
+      const name = error?.name || "Error";
       if (name === "NotAllowedError") setError("Microphone permission denied. Please allow access and try again.");
       else if (name === "NotFoundError") setError("No microphone found. Connect one and try again.");
       else if (name === "SecurityError") setError("Microphone access requires HTTPS or localhost.");
-      else setError("Failed to start recording. " + (err?.message || ""));
+      else setError("Failed to start recording. " + (error?.message || ""));
     }
   }
 
